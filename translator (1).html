@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef2f7; --panel: #ffffff; --ink: #14213d; --muted: #5d6b82;
+    --line: #cfd8e6; --accent: #1f4fd8; --accent-ink: #ffffff; --out: #f4f7fd; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1524; --panel: #16203a; --ink: #e8eefc; --muted: #93a3c4;
+      --line: #2a3859; --accent: #6b93ff; --accent-ink: #0e1524; --out: #101a30; --err: #ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Bricolage Grotesque", system-ui, sans-serif; line-height: 1.5; padding: 24px 16px; }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: clamp(2rem, 6vw, 3.4rem); font-weight: 800; letter-spacing: -0.03em; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .bar { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; margin-bottom: 12px; }
+  select, button, textarea, input { font: inherit; color: inherit; }
+  select, input { width: 100%; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 14px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; min-height: 240px; }
+  textarea, .result { flex: 1; width: 100%; min-height: 200px; padding: 14px; border: 0; background: transparent; resize: vertical; font-size: 1.1rem; }
+  .result { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--out); border-radius: 12px 12px 0 0; }
+  .result.empty { color: var(--muted); }
+  .result.error { color: var(--err); }
+  .tools { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); }
+  .tools .count { margin-left: auto; color: var(--muted); font-size: .85rem; }
+  .actions { display: flex; gap: 10px; margin: 12px 0; align-items: center; flex-wrap: wrap; }
+  details { margin-top: 20px; color: var(--muted); font-size: .9rem; }
+  details input { margin-top: 8px; max-width: 420px; }
+  @media (max-width: 680px) {
+    .bar, .panes { grid-template-columns: 1fr; }
+    #swap { justify-self: center; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Translator</h1>
+  <p class="sub">Type or paste text, pick the languages, and translate.</p>
+
+  <div class="bar">
+    <select id="src" aria-label="Source language"></select>
+    <button id="swap" title="Swap languages" aria-label="Swap languages">&#8646;</button>
+    <select id="tgt" aria-label="Target language"></select>
+  </div>
+
+  <div class="panes">
+    <section class="pane">
+      <textarea id="input" placeholder="Enter text to translate" maxlength="5000" aria-label="Text to translate"></textarea>
+      <div class="tools">
+        <button id="speakSrc" type="button">Listen</button>
+        <button id="clear" type="button">Clear</button>
+        <span class="count" id="count">0 / 5000</span>
+      </div>
+    </section>
+    <section class="pane">
+      <div id="output" class="result empty" aria-live="polite">Translation appears here</div>
+      <div class="tools">
+        <button id="copy" type="button" disabled>Copy</button>
+        <button id="speak" type="button" disabled>Listen</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button id="go" class="primary" type="button">Translate</button>
+    <span class="sub" style="margin:0">Ctrl/Cmd + Enter also works</span>
+  </div>
+
+  <details>
+    <summary>API settings</summary>
+    <p>Paste a Google Cloud Translation API key (v2). Leave it empty to use the free MyMemory service, which is fine for testing but rate-limited.</p>
+    <input id="key" type="password" placeholder="Google Translate API key" autocomplete="off">
+  </details>
+</main>
+
+<script>
+const LANGS = {
+  en: "English", hi: "Hindi", ta: "Tamil", te: "Telugu", ml: "Malayalam", kn: "Kannada",
+  bn: "Bengali", mr: "Marathi", gu: "Gujarati", ur: "Urdu", es: "Spanish", fr: "French",
+  de: "German", it: "Italian", pt: "Portuguese", ru: "Russian", ja: "Japanese",
+  ko: "Korean", zh: "Chinese (Simplified)", ar: "Arabic", tr: "Turkish", nl: "Dutch"
+};
+// Speech synthesis locale codes
+const VOICE = { zh: "zh-CN", en: "en-US", hi: "hi-IN", ta: "ta-IN", te: "te-IN", ml: "ml-IN",
+  kn: "kn-IN", bn: "bn-IN", mr: "mr-IN", gu: "gu-IN", ur: "ur-PK", es: "es-ES", fr: "fr-FR",
+  de: "de-DE", it: "it-IT", pt: "pt-PT", ru: "ru-RU", ja: "ja-JP", ko: "ko-KR", ar: "ar-SA",
+  tr: "tr-TR", nl: "nl-NL" };
+
+const $ = id => document.getElementById(id);
+const src = $("src"), tgt = $("tgt"), input = $("input"), output = $("output");
+
+function fill(sel, withAuto) {
+  if (withAuto) sel.add(new Option("Detect language", "auto"));
+  for (const [code, name] of Object.entries(LANGS)) sel.add(new Option(name, code));
+}
+fill(src, true); fill(tgt, false);
+src.value = "en"; tgt.value = "ta";
+
+function show(text, cls) {
+  output.textContent = text;
+  output.className = "result " + (cls || "");
+  const ok = !cls;
+  $("copy").disabled = !ok; $("speak").disabled = !ok;
+}
+
+async function googleTranslate(text, from, to, key) {
+  const body = { q: text, target: to, format: "text" };
+  if (from !== "auto") body.source = from;
+  const r = await fetch("https://translation.googleapis.com/language/translate/v2?key=" + encodeURIComponent(key), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || "Google API error " + r.status);
+  const t = data.data.translations[0];
+  return { text: t.translatedText, detected: t.detectedSourceLanguage };
+}
+
+async function myMemoryTranslate(text, from, to) {
+  // MyMemory needs an explicit source language and limits each request to ~500 characters
+  if (from === "auto") from = "en";
+  const chunks = text.match(/[\s\S]{1,450}(\s|$)/g) || [text];
+  const parts = [];
+  for (const c of chunks) {
+    const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(c) + "&langpair=" + from + "|" + to;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.responseStatus !== 200) throw new Error(data.responseDetails || "MyMemory error");
+    parts.push(data.responseData.translatedText);
+  }
+  return { text: parts.join(" ") };
+}
+
+async function translate() {
+  const text = input.value.trim();
+  if (!text) { show("Enter some text first.", "error"); return; }
+  if (src.value === tgt.value) { show("Source and target languages are the same.", "error"); return; }
+  $("go").disabled = true; $("go").textContent = "Translating...";
+  try {
+    const key = $("key").value.trim();
+    const res = key
+      ? await googleTranslate(text, src.value, tgt.value, key)
+      : await myMemoryTranslate(text, src.value, tgt.value);
+    show(res.text);
+    if (res.detected && LANGS[res.detected]) {
+      $("count").textContent = "Detected: " + LANGS[res.detected];
+    }
+  } catch (e) {
+    show("Translation failed: " + e.message + ". Check your connection and API key, then try again.", "error");
+  } finally {
+    $("go").disabled = false; $("go").textContent = "Translate";
+  }
+}
+
+function speak(text, lang) {
+  if (!("speechSynthesis" in window)) { alert("Text-to-speech is not supported in this browser."); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = VOICE[lang] || lang;
+  speechSynthesis.speak(u);
+}
+
+$("go").onclick = translate;
+input.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") translate(); });
+input.addEventListener("input", () => { $("count").textContent = input.value.length + " / 5000"; });
+$("clear").onclick = () => { input.value = ""; $("count").textContent = "0 / 5000"; show("Translation appears here", "empty"); input.focus(); };
+$("swap").onclick = () => {
+  if (src.value === "auto") return;
+  [src.value, tgt.value] = [tgt.value, src.value];
+  if (!output.classList.contains("empty") && !output.classList.contains("error")) input.value = output.textContent;
+};
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(output.textContent); $("copy").textContent = "Copied"; }
+  catch { $("copy").textContent = "Copy failed"; }
+  setTimeout(() => $("copy").textContent = "Copy", 1500);
+};
+$("speak").onclick = () => speak(output.textContent, tgt.value);
+$("speakSrc").onclick = () => input.value && speak(input.value, src.value === "auto" ? "en" : src.value);
+</script>
+</body>
+</html>
